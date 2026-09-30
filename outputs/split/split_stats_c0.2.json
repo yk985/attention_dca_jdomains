@@ -1,0 +1,33 @@
+{
+ "n_clusters": 10942,
+ "n_test_clusters": 2229,
+ "drop_rule": "exact",
+ "dropped_from_test": 0,
+ "nn_before": 0.17895475029945374,
+ "nn_after": 0.17895475029945374,
+ "frac_test_within_thresh": 0.6058640724226456,
+ "source": "C:\\Users\\youss\\OneDrive\\Bureau\\finance\\claude_code\\TP4_AttDCA_remastered\\transfer_folder\\DataAttentionDCA\\jdoms\\jdoms_bacteria_filtered.fasta",
+ "thresh": 0.2,
+ "n_total": 36713,
+ "n_train": 29312,
+ "n_test": 7401,
+ "test_copies": 0.0,
+ "nn_mean": 0.17895475029945374,
+ "nn_min": 0.015872955322265625,
+ "nn_q05": 0.031745970249176025,
+ "nn_median": 0.17460310459136963,
+ "frac_nn_lt_thresh": 0.6058640724226456,
+ "cluster_sizes_top10": [
+  351,
+  341,
+  317,
+  218,
+  192,
+  184,
+  183,
+  180,
+  160,
+  156
+ ],
+ "n_singletons": 6767
+}

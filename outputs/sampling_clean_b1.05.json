@@ -1,0 +1,14 @@
+{
+ "beta": 1.05,
+ "tau_int_energy": 5.632988929748535,
+ "tau_int_pll": 3.4228720664978027,
+ "n_tau_chains": 1000,
+ "n_burn": 500,
+ "n_gen_chains": 10000,
+ "n_collapsed": 0,
+ "n_generated": 10000,
+ "n_study": 1000,
+ "study_sweeps": 2000,
+ "study_collapsed_nat": 0.0,
+ "study_collapsed_rnd": 0.0
+}

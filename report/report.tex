@@ -1,0 +1,519 @@
+\documentclass[10pt,a4paper]{article}
+\usepackage[margin=2.1cm]{geometry}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{graphicx,booktabs,caption,subcaption}
+\usepackage[hidelinks]{hyperref}
+\usepackage{lmodern}          % scalable fonts (microtype expansion needs them)
+\usepackage[T1]{fontenc}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{placeins}
+\captionsetup{font=small,labelfont=bf}
+\input{auto_numbers.tex}
+
+\title{AttentionDCA on the J-domain family:\\ pseudo-likelihood training, sampling and generative checks}
+\author{TP4 --- remastered}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We fit a Potts model to the bacterial J-domain alignment ($L=\NL$ sites, $q=21$ states)
+with couplings parametrised by a factored self-attention layer (AttentionDCA), trained by
+maximising the reweighted pseudo-likelihood. New sequences are drawn with the
+pseudo-likelihood (Gibbs-like) conditional sampler, and compared with a held-out natural set
+through PCA, one- and two-site statistics, Hamming distances and the energy trajectory of the chains.
+The supplied train/test files turned out to share \CmpPctCopies\% of their sequences verbatim, so the
+split is rebuilt from the full \NsuperSet-sequence pool by clustering at \SplitIdent\% identity;
+all results below use that sequence-disjoint split.
+With $H=\Hbest$ heads and $d=\dbest$, sequences generated at $\beta=1$ reproduce the natural
+site frequencies ($r=\rFOne$) and connected correlations ($r=\rCOne$, against a train-vs-test
+ceiling of $\rCtrain$), while being new (mean distance \HamGTrOne\ to the closest training
+sequence) and as diverse as natural sequences (mean pairwise distance
+\HamGGOne\ vs.\ \HamTestTest). Chains forget their starting sequence in about \SweepsNinetyOne\
+sweeps ($\tau_\text{int}=\TauOne$ sweeps for the energy). The one clear defect is a minor
+HscB-like sub-family holding \ClTest\% of the natural weight but only \ClOne\% of the samples;
+restricting the comparison to the modes the sampler does populate raises the correlation
+agreement to $\rCcovOne$, near the $\rCtrainCov$ ceiling.
+\end{abstract}
+
+%======================================================================
+\section{Model and theory}
+%======================================================================
+\paragraph{Potts model / DCA.}
+An aligned sequence $\bm x=(x_1,\dots,x_L)$, $x_i\in\{1,\dots,q\}$ (20 amino acids + gap),
+is modelled as
+\begin{equation}
+P(\bm x)=\frac{1}{Z}\,e^{-E(\bm x)},\qquad
+E(\bm x)=-\sum_{i<j}J_{ij}(x_i,x_j)-\sum_i h_i(x_i).
+\end{equation}
+The couplings $J_{ij}(a,b)$ capture co-evolution between positions (Direct Coupling Analysis).
+As in the original AttentionDCA, no explicit fields are used ($h_i\equiv0$): conservation is absorbed in the couplings.
+
+\paragraph{Attention parametrisation.}
+With $H$ heads, each with query/key matrices $Q^h,K^h\in\mathbb R^{d\times L}$ and a value
+matrix $V^h\in\mathbb R^{q\times q}$,
+\begin{equation}
+A^h_{ij}=\frac{\exp\big(\sum_k Q^h_{ki}K^h_{kj}\big)}{\sum_{j'\neq i}\exp\big(\sum_k Q^h_{ki}K^h_{kj'}\big)}\ (A^h_{ii}=0),\qquad
+J_{ij}(a,b)=\sum_{h=1}^{H}A^h_{ij}\,V^h(a,b).
+\end{equation}
+Positional structure (which sites interact, $A^h$) is separated from amino-acid
+chemistry ($V^h$); the model has $H(2dL+q^2)$ parameters instead of $\binom{L}{2}q^2$.
+Because $A^h$ is row-normalised, $J_{ij}(a,b)\neq J_{ji}(b,a)$ in general.
+
+\paragraph{Pseudo-likelihood.}
+The partition function is intractable, so we maximise the (weighted) pseudo-likelihood built from
+the single-site conditionals
+\begin{equation}
+p(x_i=a\mid\bm x_{\setminus i})=\frac{\exp\big(\sum_{j\neq i}J_{ij}(a,x_j)\big)}{\sum_{c}\exp\big(\sum_{j\neq i}J_{ij}(c,x_j)\big)},
+\qquad
+\mathcal L=-\sum_{m=1}^{M}w_m\sum_{i=1}^{L}\log p\big(x^m_i\mid\bm x^m_{\setminus i}\big)
++\lambda\sum_{i\neq j}\sum_{a,b}J_{ij}(a,b)^2 ,
+\end{equation}
+with $\sum_m w_m=1$. Training uses Adam (lr $5\cdot10^{-3}$, batches of 1000, per-batch
+renormalised weights), a 10\% validation split and early stopping on the validation
+pseudo-likelihood.
+
+\paragraph{Sequence reweighting.}
+Natural alignments over-represent some clades. Each sequence gets
+\begin{equation}
+w_m=\frac{1}{\big|\{n:\ d_H(\bm x^m,\bm x^n)<\theta L\}\big|},\qquad
+M_\text{eff}=\sum_m w_m,\qquad
+\theta=\min\!\Big(0.5,\ \frac{0.38\cdot0.32}{\langle\text{fraction identity}\rangle}\Big),
+\end{equation}
+($d_H$ = Hamming distance, the sequence itself included). The same weights are used for the
+statistics of the natural sets in \S\ref{sec:metrics}; this gives $\theta=\ThetaTrain$,
+$M_\text{eff}=\MeffTrain$ for the $\Mtrain$ training sequences.
+
+\paragraph{Pseudo-likelihood sampling.}
+Sequences are generated with the trained conditionals: in each \emph{sweep} the $L$ sites are
+visited in random order and $x_i$ is resampled from
+$p_\beta(x_i=a\mid\bm x_{\setminus i})\propto\exp\big(\beta\sum_{j\neq i}J_{ij}(a,x_j)\big)$.
+For symmetric couplings this is exact Gibbs sampling of $P(\bm x)^\beta$; with the asymmetric
+attention couplings it is a ``pseudo-Gibbs'' chain whose stationary law is only approximately
+Boltzmann. We therefore monitor two scores along the chains:
+\begin{equation}
+E(\bm x)=-\tfrac12\sum_{i\neq j}J_{ij}(x_i,x_j)\quad\text{(symmetrised Hamiltonian)},\qquad
+\log\mathrm{PL}(\bm x)=\sum_i\log p(x_i\mid\bm x_{\setminus i}).
+\end{equation}
+Decorrelation is measured by the chain-averaged normalised autocorrelation
+$\rho(t)=\langle\delta E_s\,\delta E_{s+t}\rangle/\langle\delta E^2\rangle$ at stationarity, the integrated
+autocorrelation time $\tau_\text{int}=1+2\sum_{t\ge1}\rho(t)$ (Sokal window), and the
+normalised Hamming distance to the starting sequence $d_H(\bm x_t,\bm x_0)/L$.
+
+%======================================================================
+\section{Evaluation metrics}\label{sec:metrics}
+%======================================================================
+\paragraph{Site frequencies and correlations.} For a set with weights $w_m$ ($\sum w_m=1$; uniform for generated sets)
+\begin{equation}
+f_i(a)=\sum_m w_m\,\delta_{x^m_i,a},\quad
+f_{ij}(a,b)=\sum_m w_m\,\delta_{x^m_i,a}\delta_{x^m_j,b},\quad
+C_{ij}(a,b)=f_{ij}(a,b)-f_i(a)f_j(b)\ (i<j).
+\end{equation}
+Generated and natural statistics are compared entry-wise ($Lq=\NfOne$ values of $f_i$,
+$\binom L2 q^2=\NCij$ values of $C_{ij}$) with the Pearson coefficient
+$r=\mathrm{cov}(u,v)/(\sigma_u\sigma_v)$, the Spearman rank coefficient, the least-squares
+slope of generated vs.\ natural (1 = correlations reproduced at the right amplitude) and
+$\text{RMSE}=\sqrt{\langle(u-v)^2\rangle}$. Two references bracket the numbers: \emph{train vs.\ test}
+(finite-sample ceiling) and an \emph{independent-site model} sampled from the training $f_i$
+(reproduces $f_i$, has $C_{ij}\equiv0$).
+
+\paragraph{PCA.} Sequences are one-hot encoded ($\bm x\mapsto\{0,1\}^{Lq}$); the two leading
+principal components are fitted on the natural test set only, and every other set is projected
+onto them.
+
+\paragraph{Hamming distances.} $d(\bm x,\bm y)=\frac1L\sum_i(1-\delta_{x_i,y_i})$.
+Novelty: $d_\text{nn}(\bm x,S)=\min_{\bm y\in S}d(\bm x,\bm y)$ to the training/test set.
+Diversity: distribution of $d$ over all generated--generated pairs, compared with test--test pairs.
+
+%======================================================================
+\section{Data: audit of the supplied files and a sequence-disjoint split}\label{sec:data}
+%======================================================================
+
+\paragraph{What the supplied files contain.} The project ships several bacterial J-domain
+alignments ($L=\NL$ match columns). Table~\ref{tab:audit} lists them with the fraction of their
+unique sequences that also occur in \texttt{jdoms\_bacteria\_filtered.fasta} and in
+\texttt{jdoms\_bacteria\_train2.fasta}. Three facts come out of it:
+\begin{itemize}\itemsep0pt
+\item \texttt{jdoms\_bacteria\_filtered.fasta} (\NsuperSet\ unique sequences) is a \emph{superset}:
+      every unique sequence of every other bacterial file is contained in it.
+\item \texttt{filtered2} is exactly $\texttt{train2}\cup\texttt{test2}$ (100\% of each is inside it),
+      so that pair is a partition of a single pool.
+\item \texttt{train2} and \texttt{test2} have disjoint UniProt identifiers, but
+      \OrigCopies\% of the \texttt{test2} sequences are \emph{byte-identical} to a \texttt{train2}
+      sequence (mean distance to the nearest training sequence \OrigNN). The split was made by
+      species, and the same J-domain sequence recurs in many species, so it does not hold out
+      sequences at all. No pair of supplied files is clean: the best is
+      \texttt{train}$\to$\texttt{test2} at 17\% exact copies, but that training file has only
+      7\,695 unique sequences.
+\end{itemize}
+
+\begin{table}[h]\centering\small
+\input{tab_audit.tex}
+\caption{The supplied bacterial J-domain files. The last two columns are the fraction of a
+file's \emph{unique} sequences that also appear in \texttt{filtered} and in \texttt{train2}.}
+\label{tab:audit}
+\end{table}
+
+\paragraph{The split used here.} We therefore rebuild the split from the \NsuperSet-sequence
+superset. Sequences are clustered greedily (CD-HIT style: visit from least to most gapped, each
+unassigned sequence becomes a representative and absorbs everything within \SplitThresh\
+normalised Hamming distance, i.e.\ \SplitIdent\% identity), which gives \NclustTot\ clusters
+(\NsingleClust\ singletons). Whole clusters are then assigned to train or to test, so that no
+cluster is split across the two sides, and the only sequences removed afterwards are those
+\emph{identical} to a training sequence (\NdropClean\ here, since whole clusters move together).
+The result is $\Mtrain$ training and $\Mtest$ test sequences with \textbf{no exact copies}:
+median test-to-nearest-train distance \CleanNNmed, mean \CleanNN, 5\% quantile \CleanNNqfive\ and
+minimum \CleanNNmin\ (\CleanNNminSub\ substitution). Weights: $\theta=\ThetaTrain$,
+$M_\text{eff}=\MeffTrain$ (train) and $\theta=\ThetaTest$, $M_\text{eff}=\MeffTest$ (test).
+
+A test sequence that merely \emph{resembles} a training sequence is deliberately kept: greedy
+clustering guarantees that cluster representatives are \SplitThresh\ apart but not that every
+pair of members of different clusters is, so \CleanPctNear\% of the test set still lies within
+\SplitThresh\ of some training sequence. Discarding those would leave only the sparse, isolated
+corners of the family and would misrepresent its density --- precisely the density the generative
+model is asked to reproduce. What the split guarantees is therefore the thing that matters for a
+likelihood: no test sequence was ever seen during training.
+Section~\ref{sec:compare} compares the two splits.
+
+%======================================================================
+\section{Training}
+%======================================================================
+
+\paragraph{A note on units: nats.} All log-likelihoods here use the natural logarithm, so they are
+measured in \emph{nats} --- the information-theoretic unit you get from $\ln$ instead of $\log_2$
+($1$ nat $=1/\ln2\approx1.44$ bits). A model that assigns probability $p$ to a sequence scores
+$-\ln p$ nats on it, so a difference of $\Delta$ nats between two models means one assigns the data
+$e^{\Delta}$ times more probability: $0.7$ nats is a factor of two, $2.3$ nats a factor of ten.
+Because $\log\mathrm{PL}$ sums $L=\NL$ site terms, a value of $-\NLPLtest$ nats per sequence is
+about $-\NLPLtestSite$ nats per site, against $\ln 21=3.04$ for uniform guessing.
+
+\paragraph{Hyper-parameters.} Table~\ref{tab:sweep} is a grid over $H$, $d$ and $\lambda$,
+scored by the weighted $-\log\mathrm{PL}$ on a 10\% validation split of the training file
+(maximum 3000 epochs, patience 50, best epoch restored). Doubling $H$ helps until about 128 heads, after
+which the gain is $0.3$ nats per sequence for twice the parameters. We keep $H=\Hbest$, $d=\dbest$,
+$\lambda=\lambest$ (\Nparams\ parameters, best epoch \BestEpoch). The training curve is in
+Fig.~\ref{fig:train}. Weighted $-\log\mathrm{PL}$ per sequence: \NLPLtrain\ (train) and \NLPLtest\
+(test). The test set here shares no sequence with the training set, so that gap (\NLPLgap\ nats
+per sequence, about \NLPLgapPct\% ) is a genuine generalisation gap rather than memorisation.
+
+\paragraph{Structure check.} The couplings carry structural information: after
+symmetrisation, zero-sum gauge, Frobenius norm and APC, the top $L/2$ and top $L$ ranked pairs
+with $|i-j|>4$ are contacts ($<8$\,\AA\ in the J-domain structure) with precision \PPVLhalf\ and \PPVL\
+(random pairs: \PPVbase).
+
+\begin{table}[h]\centering\small
+\input{tab_sweep.tex}
+\caption{Hyper-parameter grid, sorted by validation $-\log\mathrm{PL}$ per sequence
+(weighted, no penalty). Chosen model: second row.}\label{tab:sweep}
+\end{table}
+
+\begin{figure}[h]\centering
+\includegraphics[width=\linewidth]{../outputs/figures/training_contacts.pdf}
+\caption{Left: weighted $-\log\mathrm{PL}$ per sequence (training batches vs.\ validation split).
+Right: contact-prediction precision of the ranked APC-corrected coupling norms; the vertical line marks $L$ pairs.}
+\label{fig:train}
+\end{figure}
+
+
+%======================================================================
+\section{Sampling and decorrelation}
+%======================================================================
+
+\paragraph{Implementation.} All chains are updated at once on the GPU: the conditional
+logits of site $i$ for $C$ chains are a single $(C\times Lq)\cdot(Lq\times q)$ product. One
+site-update per chain costs about $0.3\,\mu$s, against 0.6\,ms (NumPy) to 28\,ms (torch tensor) in the
+original pure-Python loop, a speed-up of $10^3$--$10^5$. The original code also saved the state after
+\emph{every single-site update} as a new sample, so consecutive ``sequences'' differed at
+$\le1$ site. Here every sample is the final state of an independent chain.
+
+\paragraph{Temperature.} Pseudo-likelihood fits the conditionals, not the global
+normalisation, so the $\beta=1$ chain need not have the energy of natural sequences. Figure~\ref{fig:beta}
+scans $\beta$ (3000 chains, 1000 sweeps). At $\beta=1$ the chains sit slightly above the natural
+energy, and increasing $\beta$ trades diversity for sharper correlations. We report $\beta=1$
+(the learned model as is) and $\beta^*=\BetaStar$, the value at which the mean energy of the samples
+equals the reweighted mean energy of the \emph{training} set (\Etrain). $\beta^*$ is therefore chosen
+without looking at the test set.
+
+\paragraph{Decorrelation from the initial sequence.} Figure~\ref{fig:mixing} follows 1000 chains
+started from training sequences and 1000 from uniformly random sequences over \StudySweeps\ sweeps.
+\begin{itemize}\itemsep0pt
+\item Random starts ($E\approx\Erandom$) fall into the family basin within about 20 sweeps and reach
+      the same stationary energy as natural starts ($\EendRndOne$ vs.\ $\EendNatOne$ at $\beta=1$).
+      The stationary state therefore does not depend on the start.
+\item Chains started from natural sequences first rise in energy (natural sequences are more
+      stable than typical samples at $\beta=1$), then fluctuate around the stationary mean.
+\item The distance from the start reaches 90\% of its plateau after \SweepsNinetyOne\ sweeps. The plateau
+      ($\HamEndOne$) is at or above the mean test--test distance ($\HamTestTest$): the chain
+      forgets its seed entirely.
+\item Stationary energy autocorrelation: $\tau_\text{int}=\TauOne$ sweeps at $\beta=1$ and $\TauStar$
+      at $\beta^*$ (PLL: $\TauPOne$ and $\TauPStar$). Generation uses \BurnOne\ sweeps per chain
+      ($\approx40\,\tau_\text{int}$), \NgenOne\ independent chains per temperature.
+\item No chain ends in a degenerate gap-only state (0 of \NgenOne; $>90\%$ gaps is the filter
+      applied to the natural MSA). Such a collapse \emph{did} occur (up to 40\% of chains) with an
+      under-trained model (150 epochs, $H=32$), where the all-gap sequence was the energy
+      minimum. It disappears once training converges.
+\end{itemize}
+
+\begin{figure}[h]\centering
+\includegraphics[width=\linewidth]{../outputs/figures/mixing.pdf}
+\caption{Pseudo-likelihood sampling. (a) median energy (band: 10--90\% of chains from training
+starts); (b) normalised Hamming distance to the starting sequence; (c) individual chains at
+$\beta=1$ (solid: training start, dotted: random start); (d) chain-averaged energy
+autocorrelation over the second half of the chains.}
+\label{fig:mixing}
+\end{figure}
+
+\begin{figure}[h]\centering
+\includegraphics[width=\linewidth]{../outputs/figures/beta_scan.pdf}
+\caption{Inverse-temperature scan (chains started from training sequences). Vertical lines mark
+$\beta=1$ and $\beta^*=\BetaStar$. Right: mean pairwise distance among samples (gen--gen), mean
+distance to the closest training sequence, and the natural test--test value.}
+\label{fig:beta}
+\end{figure}
+
+
+%======================================================================
+\section{Generated vs.\ natural sequences}
+%======================================================================
+
+\paragraph{PCA (Fig.~\ref{fig:pca}).} The first two components of the one-hot test set
+explain \PCone\% and \PCtwo\% of the variance. $k$-means with $k=\Kclust$ on the (PC1,\,PC2)
+plane of the natural test set splits the family into two large clusters and one minor one
+(the elbow of the within-cluster inertia sits at $k=3$). Writing $s_k$ for a cluster's share of
+a set's total weight, a cluster counts as \emph{covered} when
+$s^\text{gen}_k/s^\text{nat}_k\ge0.6$ for both temperatures. \NcovClust\ of the \Kclust\ clusters
+are covered, holding \CovWeight\% of the natural test weight; the remaining minor cluster
+(HscB-like J-domains) holds \ClTest\% of the natural test weight but only \ClOne\%
+($\beta=1$) and \ClStar\% ($\beta^*$) of the samples. About one chain in ten \emph{starts} inside
+it, so this is not a failure to reach the cluster: the model gives it too little stationary
+weight. Over the covered region the agreement is good --- the 1-D Wasserstein distances to
+the reweighted test distribution along PC1/PC2 are $\WPCaOne/\WPCbOne$ ($\beta=1$) and
+$\WPCaStar/\WPCbStar$ ($\beta^*$), against $\WPCaProf/\WPCbProf$ for the independent-site model.
+
+\begin{figure}[h]\centering
+\includegraphics[width=\linewidth]{../outputs/figures/pca.pdf}
+\caption{Test and generated sequences projected on the first two principal components of the
+one-hot test alignment (PCA fitted on the test set only); each panel draws a random sample of
+the points, the natural panel drawn with its reweighting weights. Crosses: $k$-means centres,
+red for the cluster the samples miss. Right: densities of the full sets.}
+\label{fig:pca}
+\end{figure}
+
+\paragraph{Why the minor cluster is missed: the model does not learn the priors.}
+Table~\ref{tab:clusene} separates the two things that set a cluster's share of the samples.
+The pseudo-likelihood of \emph{training} sequences is essentially the same in all three clusters
+(\PLLmissTrain\ nats for \MissCl\ against \PLLcovTrain\ for the covered ones), so the model has
+learned the local statistics of the minor sub-family about as well as everything else. Its
+\emph{energy}, however, is not comparable at all: natural sequences of \MissCl\ score
+\EmissTest\ on the test set and \EmissTrain\ on the training set, roughly \EgapMiss\ units above
+the covered clusters (\EcovTest\ and \EcovTrain). Since the stationary weight of a basin is set by
+its free energy, that offset is what starves the cluster: the measured free-energy error is
+$\Delta F=-\ln(s^\text{gen}/s^\text{nat})=\dFmiss$ nats for \MissCl, i.e.\ the sampler gives it
+\dFmissFac\ of its natural weight, against $|\Delta F|\le0.23$ for the other two.
+
+This is the expected failure mode of this objective. Maximising the pseudo-likelihood constrains
+the conditionals $p(x_i\mid\bm x_{\setminus i})$ --- purely local quantities --- and never the
+global normalisation, so nothing in the loss asks the model to reproduce how \emph{much} total
+probability mass each sub-family carries. The model has no fields and no mixture component to hold
+such a prior; the relative weight of the basins is only an indirect consequence of the couplings.
+Reweighting compounds this, since it is designed to flatten exactly the clade-frequency signal
+that would tell the model how common each sub-family is. The result is a model that describes
+every sub-family correctly and populates them in the wrong proportion. It is also why the
+independent-site baseline distributes its samples as $(0.02,0.10,0.88)$ against the natural
+$(0.14,0.39,0.47)$: cluster identity is a covariation effect, and a model without couplings
+collapses onto the single dominant mode.
+
+\begin{table}[h]\centering\small
+\input{tab_cluster_energy.tex}
+\caption{Per-cluster diagnosis of the sampling weights ($\beta=1$). Weight shares and
+$\langle\cdot\rangle$ use the reweighting weights for the natural sets. $\Delta F=-\ln(
+s^\text{gen}/s^\text{nat})$ is the model's free-energy error for the cluster, in nats.
+$^{\dagger}$: the cluster the sampler misses. The conditionals are fitted equally well everywhere
+($\langle\log\mathrm{PL}\rangle$ on train), but the energy of \MissCl\ is far higher, so its
+Boltzmann weight is far too small.}
+\label{tab:clusene}
+\end{table}
+
+\paragraph{Statistics restricted to the covered clusters (Fig.~\ref{fig:statsclust},
+Table~\ref{tab:clusters}).} To separate ``the model distorts the covariation'' from ``the model
+misses one sub-family'', the whole comparison is repeated with \emph{both} sets restricted to the
+covered clusters (natural: \NtestCov\ sequences, $M_\text{eff}=\MeffTestCov$; weights recomputed
+inside the subset). The correlation agreement rises from $\rCOne$ to $\rCcovOne$ at $\beta=1$ and
+from $\rCStar$ to $\rCcovStar$ at $\beta^*$, while the train-vs-test ceiling barely moves
+($\rCtrain\to\rCtrainCov$): inside the modes it populates, the model is close to the
+finite-sampling limit, and the missed sub-family accounts for most of the residual gap. On the
+strongest 1\% of correlations the restricted agreement is $\rCcovTopOne$ / $\rCcovTopStar$, with
+the $\beta^*$ slope at $\sCcovStar$.
+
+\begin{figure}[h]\centering
+\includegraphics[width=\linewidth]{../outputs/figures/freqs_corr_clusters.pdf}
+\caption{As Fig.~\ref{fig:stats}, with natural and generated sets both restricted to the
+covered PCA clusters.}
+\label{fig:statsclust}
+\end{figure}
+
+\begin{table}[h]\centering\small
+\input{tab_clusters.tex}
+\caption{Statistics restricted to the covered PCA clusters (\CovWeight\% of the natural test
+weight). Compare with Table~\ref{tab:stats}, which uses the full sets.}
+\label{tab:clusters}
+\end{table}
+
+\paragraph{One- and two-site statistics (Fig.~\ref{fig:stats}, Table~\ref{tab:stats}).}
+Site frequencies are reproduced almost exactly ($r=\rFOne$). The connected correlations reach
+$r=\rCOne$ at $\beta=1$ and $r=\rCStar$ at $\beta^*$, against a finite-sample ceiling of
+$\rCtrain$ (train vs.\ test) and $\rCprof$ for the independent-site model, which matches
+$f_i$ equally well. The regression slope shows that $\beta=1$ under-estimates the correlation
+amplitudes ($\sCOne$), and $\beta^*$ corrects most of this ($\sCStar$, against a ceiling of
+$\sCtrain$). Note that $r$ and the slope measure different things and are related by
+$\text{slope}=r\,\sigma_\text{gen}/\sigma_\text{nat}$: $r$ is the tightness of the relation and is
+blind to a uniform rescaling, the slope is the amplitude. Neither should be compared to 1 naively
+--- the natural $C_{ij}$ carry sampling noise, which attenuates any least-squares slope. A
+half-split of the test set puts their reliability at \Crel, and dividing by it gives disattenuated
+slopes \sCdisOne\ ($\beta=1$), \sCdisStar\ ($\beta^*$) and \sCdisTrain\ (ceiling).
+The low Spearman values on $C_{ij}$ are expected: most of the \NCij\ entries
+are sampling noise around zero, so their ranks carry little information; on the strongest 1\%
+of the entries the rank agreement is high as well (Table~\ref{tab:stats}).
+
+\begin{figure}[h]\centering
+\includegraphics[width=\linewidth]{../outputs/figures/freqs_corr.pdf}
+\caption{Generated vs.\ natural (reweighted test) one-site frequencies (\NfOne\ values) and
+connected correlations. The $C_{ij}$ panels show the strongest 1\% of $|C^\text{nat}_{ij}(a,b)|$
+in colour over a thinned grey sample of all \NCij\ entries. Dashed: identity.}
+\label{fig:stats}
+\end{figure}
+
+\begin{table}[h]\centering\small
+\input{tab_stats.tex}
+\caption{Agreement of generated statistics with the natural test set (natural sets reweighted,
+generated sets uniform). ``Top 1\%'': the 1\% largest $|C^\text{test}_{ij}(a,b)|$.}
+\label{tab:stats}
+\end{table}
+
+\paragraph{Diversity and novelty (Fig.~\ref{fig:ham}, Table~\ref{tab:ham}).}
+\begin{itemize}\itemsep0pt
+\item \textbf{Generated vs.\ test.} The closest test sequence lies on average at \HamGTOne\ ($\beta=1$) and
+      \HamGTStar\ ($\beta^*$). Two natural references bound this: a test sequence's closest
+      \emph{other} test sequence sits at \HamTestNN\ and its closest \emph{training} sequence at
+      \HamTestTrain. Natural sequences therefore have much closer natural neighbours than the
+      generated ones do --- the samples are new sequences, not near-copies.
+\item \textbf{Generated vs.\ train.} There is no memorisation: the mean distance to the closest training
+      sequence is \HamGTrOne\ (5\% quantile \HamGTrMinOne) and every sample is distinct
+      (\UniqOne\% unique).
+\item \textbf{Generated vs.\ generated.} The all-pairs distribution (mean \HamGGOne\ at $\beta=1$, \HamGGStar\
+      at $\beta^*$) sits on top of the test--test distribution (\HamTestTest), without the
+      left tail of near-identical natural pairs (phylogenetic redundancy removed by the
+      weights). The samples are therefore neither collapsed onto a few modes nor spread too thin.
+\end{itemize}
+
+\begin{figure}[h]\centering
+\includegraphics[width=\linewidth]{../outputs/figures/hamming.pdf}
+\caption{Normalised Hamming distances; triangles mark means. Each panel carries a different
+blue natural reference, and each answers a different question.
+\textbf{(a)} nearest-neighbour distance \emph{into the test set}: for the generated sets, how far
+each sample is from the closest natural test sequence; the blue curve is the same quantity for a
+test sequence against the \emph{other} test sequences (leave-one-out), i.e.\ how close natural
+relatives normally are. Its spike near zero is the family's phylogenetic redundancy.
+\textbf{(b)} nearest-neighbour distance \emph{into the training set} --- the memorisation check.
+Blue is the held-out test set measured the same way, which is the strongest ``legitimate''
+proximity to training data a genuine J-domain shows.
+\textbf{(c)} all pairwise distances \emph{inside} one set (3000 sequences per set): the spread of
+the set itself. Blue is the natural test set; the dotted grey curve is generated-vs-test, which
+lies on top of the generated curve when the two sets occupy the same region of sequence space.}
+\label{fig:ham}
+\end{figure}
+
+\begin{table}[h]\centering\small
+\input{tab_hamming.tex}
+\caption{Hamming-distance summary; ``$=0$'' is the fraction of exact copies.}
+\label{tab:ham}
+\end{table}
+
+\paragraph{Energy of the samples (Fig.~\ref{fig:energy}).} The reweighted mean energy of the test
+sequences is \Etest\ (unweighted \Eunw). Samples at $\beta=1$ have mean \EgenOne\ (Wasserstein
+distance to test \WEOne); at $\beta^*$ the distribution lies on top of the natural one (\EgenStar,
+distance \WEStar, independent-site model \WEprof). Per-site pseudo-log-likelihoods show the same
+ordering: independent-site $\ll$ $\beta=1$ $<$ $\beta^*$ $\lesssim$ natural.
+
+\begin{figure}[h]\centering
+\includegraphics[width=\linewidth]{../outputs/figures/energy_dist.pdf}
+\caption{Distribution of the energy $E(\bm x)$ and of $\log\mathrm{PL}(\bm x)/L$ under the trained model.}
+\label{fig:energy}
+\end{figure}
+
+
+%======================================================================
+\section{Effect of the split}\label{sec:compare}
+%======================================================================
+Everything above uses the sequence-disjoint split of \S\ref{sec:data}. Running the identical
+pipeline on the supplied species split (\CmpMtrain\ train / \CmpMtest\ test, \CmpPctCopies\% of
+the test set copied from the training set) gives the numbers in the second column below. The
+two differ in the direction one expects: the shipped split makes the model look better on the
+held-out likelihood, because most of its ``test'' sequences were seen during training.
+
+\begin{center}\small
+\begin{tabular}{lcc}
+\toprule
+ & sequence-disjoint (this work) & supplied species split \\
+\midrule
+train / test sequences & \Mtrain\ / \Mtest & \CmpMtrain\ / \CmpMtest \\
+test sequences copied from train & 0\% & \CmpPctCopies\% \\
+validation $-\log\mathrm{PL}$ per sequence & \ValNLPL & \CmpValNLPL \\
+test $-\log\mathrm{PL}$ per sequence & \NLPLtest & \CmpNLPLtest \\
+\quad on its non-copied test sequences & --- & \CmpNLPLnovel \\
+contact PPV at $L/2$ & \PPVLhalf & \CmpPPVLhalf \\
+$r(f_i)$, $\beta=1$ & \rFOne & \CmprFOne \\
+$r(C_{ij})$, $\beta=1$ & \rCOne & \CmprCOne \\
+\quad ceiling (train vs.\ test) & \rCtrain & \CmprCtrain \\
+\quad restricted to covered clusters & \rCcovOne & \CmprCcovOne \\
+generated $\to$ nearest train, $\beta=1$ & \HamGTrOne & \CmpHamGTrOne \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The generative metrics themselves are barely affected --- the model learns nearly the same
+distribution either way --- but the \emph{interpretation} of the likelihood numbers changes
+completely, and only the disjoint split supports a claim of generalisation.
+
+%======================================================================
+\section{Summary and caveats}
+%======================================================================
+
+\begin{itemize}\itemsep1pt
+\item \textbf{Data.} The supplied split is species-disjoint but not sequence-disjoint
+      (\CmpPctCopies\% verbatim copies), so it cannot measure generalisation. The split used here
+      clusters the full pool at \SplitIdent\% identity and moves whole clusters to one side
+      (\Mtrain\ / \Mtest\ sequences, no exact copies, median distance \CleanNNmed\ to the nearest
+      training sequence).
+\item \textbf{Model.} The attention-factorised Potts model ($H=\Hbest$, $d=\dbest$) predicts contacts
+      well (PPV \PPVLhalf\ at $L/2$) and keeps a \NLPLgapPct\% pseudo-likelihood gap to genuinely
+      unseen sequences.
+\item \textbf{Sampling.} The vectorised sampler is $10^3$--$10^5\times$ faster than the original code and
+      decorrelates from its seed in about \SweepsNinetyOne\ sweeps ($\tau_\text{int}=\TauOne$). Samples are
+      end-points of independent chains after \BurnOne\ sweeps ($\approx40\,\tau_\text{int}$).
+\item \textbf{Generation quality.} $r(f_i)=\rFOne$ and $r(C_{ij})=\rCOne$--$\rCStar$ against the
+      \rCtrain\ ceiling, rising to $\rCcovOne$--$\rCcovStar$ (ceiling $\rCtrainCov$) on the modes the
+      sampler populates. The samples are novel and as diverse as natural sequences.
+      $\beta^*=\BetaStar$ restores the correlation amplitude and the natural energy level at a
+      small cost in diversity.
+\item \textbf{Limitations.}
+      (i) PL training does not constrain the global normalisation, hence the $\beta$ offset.
+      (ii) The attention couplings are asymmetric, so the PL chain is only approximately Boltzmann.
+      (iii) The HscB-like sub-family is under-sampled (\ClOne\% vs.\ \ClTest\%) because
+      pseudo-likelihood fits conditionals and not the relative masses of the basins: the model
+      learns that sub-family's local statistics as well as any other
+      ($\langle\log\mathrm{PL}\rangle$ on train \PLLmissTrain\ vs.\ \PLLcovTrain) but puts its
+      energy \EgapMiss\ units too high, a free-energy error of \dFmiss\ nats. Adding explicit
+      fields, fitting a mixture, or reweighting the training set towards the sub-family would all
+      address the prior directly.
+      (iv) The split removes only exact copies, so \CleanPctNear\% of the test set still lies
+      within \SplitThresh\ of a training sequence; the held-out likelihood is a fair measure of
+      generalisation to unseen sequences, not to unseen sub-families.
+\end{itemize}
+Code: \texttt{attdca/} (package), \texttt{scripts/} (pipeline), \texttt{tests/} (checks of the vectorised
+likelihood, energy and sampler against naive loops and an exact two-site Gibbs target).
+
+
+\end{document}

@@ -1,0 +1,40 @@
+# Original hand-over material: large source alignments and the pre-existing code.
+# Kept locally, deliberately not versioned.
+transfer_folder/
+
+# Heavy intermediates - all reproducible from the code in a few minutes on a GPU.
+# per-sweep sampling traces (~32 MB each)
+outputs/*.npz
+# coupling tensors (derivable from the saved model in seconds)
+outputs/J_*.npy
+# generated sequences (also stored, and versioned, as FASTA)
+outputs/generated_*.npy
+# hyper-parameter-sweep checkpoints
+outputs/model_sweep_*.pt
+outputs/split/labels_*.npy
+outputs/*.log
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+*.egg-info/
+.venv/
+venv/
+
+# LaTeX build artifacts (the PDFs themselves are versioned)
+report/*.aux
+report/*.log
+report/*.out
+report/*.fls
+report/*.fdb_latexmk
+report/*.synctex.gz
+report/*.toc
+report/*.bbl
+report/*.blg
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini

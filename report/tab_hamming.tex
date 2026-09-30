@@ -1,0 +1,22 @@
+\begin{tabular}{lcccc}
+\toprule
+distance (normalised by $L$) & mean & median & 5\% quantile & $=0$ \\
+\midrule
+gen ($\beta=1$) $\to$ nearest test & 0.437 & 0.444 & 0.333 & 0.0\% \\
+gen ($\beta=1$) $\to$ nearest train & 0.420 & 0.413 & 0.317 & 0.0\% \\
+gen ($\beta=1$) $\to$ nearest other gen & 0.430 & 0.429 & 0.349 & 0.0\% \\
+gen--gen, all pairs ($\beta=1$) & 0.679 & 0.683 & 0.540 & 0.0\% \\
+gen--test, all pairs ($\beta=1$) & 0.666 & 0.683 & 0.492 & 0.0\% \\
+\midrule
+gen ($\beta^*=1.05$) $\to$ nearest test & 0.405 & 0.413 & 0.302 & 0.0\% \\
+gen ($\beta^*=1.05$) $\to$ nearest train & 0.389 & 0.397 & 0.286 & 0.0\% \\
+gen ($\beta^*=1.05$) $\to$ nearest other gen & 0.394 & 0.397 & 0.317 & 0.0\% \\
+gen--gen, all pairs ($\beta^*=1.05$) & 0.650 & 0.651 & 0.508 & 0.0\% \\
+gen--test, all pairs ($\beta^*=1.05$) & 0.639 & 0.651 & 0.460 & 0.0\% \\
+\midrule
+test $\to$ nearest other test & 0.116 & 0.079 & 0.016 & 0.0\% \\
+test $\to$ nearest train & 0.179 & 0.175 & 0.032 & 0.0\% \\
+novel test $\to$ nearest train & 0.179 & 0.175 & 0.032 & 0.0\% \\
+test--test, all pairs & 0.598 & 0.635 & 0.365 & 0.0\% \\
+\bottomrule
+\end{tabular}

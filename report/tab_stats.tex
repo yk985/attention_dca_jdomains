@@ -1,0 +1,20 @@
+\begin{tabular}{llcccc}
+\toprule
+statistic & set vs.\ natural test & Pearson $r$ & Spearman $\rho$ & slope & RMSE \\
+\midrule
+$f_i(a)$ & generated, $\beta=1$ & 0.990 & 0.972 & 1.01 & 0.0160 \\
+ & generated, $\beta^*=1.05$ & 0.992 & 0.970 & 1.06 & 0.0165 \\
+ & natural train (ceiling) & 0.998 & 0.983 & 0.99 & 0.0070 \\
+ & independent-site model & 0.998 & 0.982 & 0.99 & 0.0072 \\
+\midrule
+$C_{ij}(a,b)$ & generated, $\beta=1$ & 0.871 & 0.193 & 0.78 & 0.0015 \\
+ & generated, $\beta^*=1.05$ & 0.859 & 0.209 & 0.85 & 0.0016 \\
+ & natural train (ceiling) & 0.944 & 0.377 & 0.88 & 0.0010 \\
+ & independent-site model & -0.005 & 0.058 & -0.00 & 0.0030 \\
+\midrule
+$C_{ij}$, top 1\% & generated, $\beta=1$ & 0.918 & 0.880 & 0.84 & 0.0113 \\
+ & generated, $\beta^*=1.05$ & 0.908 & 0.865 & 0.93 & 0.0123 \\
+ & natural train (ceiling) & 0.981 & 0.949 & 0.91 & 0.0057 \\
+ & independent-site model & -0.009 & -0.022 & -0.00 & 0.0283 \\
+\bottomrule
+\end{tabular}

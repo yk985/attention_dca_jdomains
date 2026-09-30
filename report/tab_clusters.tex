@@ -1,0 +1,20 @@
+\begin{tabular}{llcccc}
+\toprule
+statistic & set vs.\ natural (covered clusters) & Pearson $r$ & Spearman $\rho$ & slope & RMSE \\
+\midrule
+$f_i(a)$ & generated, $\beta=1$ & 0.991 & 0.970 & 0.98 & 0.0153 \\
+ & generated, $\beta^*=1.05$ & 0.996 & 0.969 & 1.03 & 0.0118 \\
+ & natural train (ceiling) & 0.998 & 0.980 & 0.98 & 0.0079 \\
+ & independent-site model & 0.993 & 0.973 & 0.95 & 0.0144 \\
+\midrule
+$C_{ij}(a,b)$ & generated, $\beta=1$ & 0.918 & 0.179 & 0.82 & 0.0012 \\
+ & generated, $\beta^*=1.05$ & 0.918 & 0.199 & 0.91 & 0.0013 \\
+ & natural train (ceiling) & 0.941 & 0.345 & 0.87 & 0.0010 \\
+ & independent-site model & -0.013 & 0.060 & -0.00 & 0.0031 \\
+\midrule
+$C_{ij}$, top 1\% & generated, $\beta=1$ & 0.961 & 0.919 & 0.87 & 0.0084 \\
+ & generated, $\beta^*=1.05$ & 0.961 & 0.919 & 0.97 & 0.0083 \\
+ & natural train (ceiling) & 0.979 & 0.938 & 0.91 & 0.0061 \\
+ & independent-site model & -0.031 & -0.035 & -0.00 & 0.0296 \\
+\bottomrule
+\end{tabular}
