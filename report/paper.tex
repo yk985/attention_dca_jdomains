@@ -23,6 +23,7 @@
 \setcounter{totalnumber}{5}
 \setcounter{dbltopnumber}{3}
 \input{auto_numbers.tex}
+\input{cond_numbers.tex}
 
 \title{\vspace{-1.2cm}\large\bfseries Generative modelling of the bacterial J-domain family with
 an attention-parametrised Potts model}
@@ -53,7 +54,12 @@ restricting the comparison to the modes the sampler does populate raises the cor
 to $\rCcovOne$ against a $\rCtrainCov$ ceiling. That sub-family is not mis-modelled but
 mis-weighted: its conditionals are fitted as well as any other cluster's, while its energy sits
 \EgapMiss\ units too high --- pseudo-likelihood constrains conditionals, never the relative masses
-of the basins, so the model learns each sub-family but not the prior over them.
+of the basins, so the model learns each sub-family but not the prior over them. Finally, since a
+PCA coordinate of a one-hot sequence is an exact Potts term, a harmonic restraint added to the
+trained energy at sampling time steers generation to any region of the family, including the
+neglected sub-family ($5\%\to100\%$ of chains), while retaining the HPD motif in $\ge96\%$ of
+samples; a conditional field learned from blurred coordinates matches it and does better on the
+neglected sub-family.
 \vspace{0.5cm}
 \end{abstract}
 \end{@twocolumnfalse}
@@ -244,7 +250,7 @@ thinned grey sample of all \NCij\ entries. Dashed: identity.}
 \label{tab:stats}
 \end{table*}
 
-\subsection{A missing sub-family, and what it costs}
+\subsection{A missing sub-family, and what it costs}\label{sec:missing}
 Projected on the first two principal components of the test alignment (Fig.~\ref{fig:pca}), the
 family splits into two large clusters and one minor one. $k$-means with $k=\Kclust$ (the elbow of
 the within-cluster inertia) makes this quantitative: writing $s_k$ for a cluster's share of a
@@ -266,8 +272,9 @@ i.e.\ \dFmissFac\ of the natural weight, against $|\Delta F|\le0.23$ elsewhere. 
 to the objective: maximising Eq.~\eqref{eq:cond} constrains local conditionals and never the
 global normalisation, so nothing in the loss asks the model how much total mass each sub-family
 should carry, and with no fields and no mixture component there is nowhere for such a prior to
-live. Reweighting compounds it by design, since it flattens exactly the clade-frequency signal
-that would carry that information.
+live. Reweighting is not to blame: \MissCl\ is \RawShareMiss\% of the raw training sequences and
+\ClTrain\% of the reweighted ones, so the weights already nearly double its influence and the
+model still undershoots the target it was given.
 
 \begin{table*}[t]\centering\small
 \input{tab_cluster_energy.tex}
@@ -343,6 +350,8 @@ sets occupy the same region of sequence space.}
 \label{tab:ham}
 \end{table*}
 
+\input{sec_cond_paper.tex}
+
 %======================================================================
 \section{Discussion}
 %======================================================================
@@ -365,11 +374,13 @@ recovers the correlation amplitude almost exactly.
 not a sampling artefact --- chains started inside it leave --- but a statement about the learned
 landscape: that basin is \EgapMiss\ energy units too shallow, worth \dFmiss\ nats of free energy.
 The diagnosis in Table~\ref{tab:clusene} points at the fix, because the failure is in the prior
-rather than in the conditionals. Adding explicit fields $h_i$, fitting a mixture over
-sub-families, or reweighting the training set towards the minority group would each give the
-model somewhere to put that mass; sampling from a mixture of temperatures would paper over it,
-since Fig.~\ref{fig:beta} shows the minor cluster is relatively better populated at lower $\beta$.
-All are single-parameter experiments on top of the existing pipeline.
+rather than in the conditionals. Explicit fields $h_i$ turn out not to be enough: added to the model
+they leave the pseudo-likelihood unchanged (\ValBase\ vs \ValMtwo) and the sub-family at $5\%$ of the
+samples, since its deficit comes from a near-cancellation between energy and entropy that a per-site
+term cannot rebalance. Sec.~\ref{sec:cond} shows the practical alternative: conditioning puts
+samples wherever one asks, so drawing targets from the natural distribution of coordinates and
+sampling $p(\bm x\mid\bm t)$ makes the sub-family weights correct by construction. A mixture over
+sub-families or likelihood-based fine-tuning would instead repair the prior itself.
 
 \paragraph{On evaluating generative sequence models.} Two methodological points generalise beyond
 this family. First, a species-disjoint split is not a sequence-disjoint split; had we not audited
@@ -389,7 +400,10 @@ faithful over the bulk of the family: $r=\rFOne$ on site frequencies, $r=\rCOne$
 correlations, rising to $\rCcovOne$ against a $\rCtrainCov$ ceiling on the modes the sampler
 populates. The residual error is concentrated in one under-weighted sub-family rather than spread
 over the covariation structure, and the sampler itself is fast (${\sim}0.3\,\mu$s per
-chain-update) and well-mixed ($\tau_\text{int}=\TauOne$ sweeps).
+chain-update) and well-mixed ($\tau_\text{int}=\TauOne$ sweeps). That residual error is also
+addressable at sampling time: because a PCA coordinate is an exact Potts term, a harmonic restraint
+on it --- or a conditional field trained on blurred coordinates --- places samples in any chosen
+region of the family, including the one free sampling neglects, with the fold intact.
 
 \vspace{0.3cm}
 \noindent\small

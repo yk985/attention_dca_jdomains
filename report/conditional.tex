@@ -1,0 +1,224 @@
+\documentclass[10pt,a4paper]{article}
+\usepackage[margin=2.1cm]{geometry}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{graphicx,booktabs,caption}
+\usepackage[hidelinks]{hyperref}
+\usepackage{lmodern}
+\usepackage[T1]{fontenc}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{tcolorbox}
+\captionsetup{font=small,labelfont=bf}
+\graphicspath{{../outputs/figures/}}
+\input{cond_numbers.tex}
+
+\newcommand{\PC}{\mathrm{PC}}
+\newtcolorbox{keybox}{colback=black!3,colframe=black!25,boxrule=0.4pt,arc=1pt,left=5pt,right=5pt,top=3pt,bottom=3pt}
+
+\title{\vspace{-1.2cm}Conditioning AttentionDCA on PCA coordinates, and adding fields:\\
+experiments C1, C3 and M2}
+\author{AttentionDCA / J-domains --- follow-up to the proposal note}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+Three of the proposed methods are implemented and tested on the clean split:
+\textbf{C1}, a harmonic restraint on the PCA coordinates added to the trained model at sampling
+time; \textbf{C3}, a model with fields that depend on the target coordinates, learned by
+conditional pseudo-likelihood; and \textbf{M2}, plain per-site fields added to AttentionDCA.
+\S\ref{sec:sp} and \S\ref{sec:pca} are a slow refresher on the two ideas everything rests on: how an
+energy function turns into sampling probabilities (and what entropy and free energy have to do
+with cluster weights), and why a PCA coordinate is an exact Potts term. The results follow in
+\S\ref{sec:m2}--\S\ref{sec:c3}.
+\end{abstract}
+
+%======================================================================
+\section{A statistical-physics refresher}\label{sec:sp}
+%======================================================================
+\paragraph{Energy and probability.} A Potts model assigns every sequence $\bm x=(x_1,\dots,x_L)$
+an energy $E(\bm x)$ and defines its probability by the Boltzmann distribution
+\begin{equation}
+p(\bm x)=\frac{e^{-\beta E(\bm x)}}{\mathcal Z},\qquad \mathcal Z=\sum_{\bm x}e^{-\beta E(\bm x)} ,
+\label{eq:boltz}
+\end{equation}
+with $\beta=1/T$ the inverse temperature. Our model has $E(\bm x)=-\sum_i h_i(x_i)-\frac12\sum_{i\neq j}
+J_{ij}(x_i,x_j)$ (the main report's model has $h=0$). The partition function $\mathcal Z$ is a sum
+over $21^{63}$ sequences and is never computed; it is not needed, because everything we do uses
+\emph{ratios} of probabilities, in which it cancels:
+\begin{equation}
+\frac{p(\bm x)}{p(\bm y)}=e^{-\beta\,[E(\bm x)-E(\bm y)]} .
+\end{equation}
+At $\beta=1$, a sequence one energy unit lower is $e\approx2.7$ times more probable, ten units lower
+$e^{10}\approx22\,000$ times. This is why energies are quoted in \emph{nats}: an energy
+difference \emph{is} a log-probability ratio.
+
+\paragraph{How the sampler uses the energy.} One step of the sampler picks a site $i$, holds the
+other $L-1$ letters fixed, and asks: what would the energy be for each of the $21$ possible letters
+at $i$? It then draws letter $a$ with probability
+\begin{equation}
+p(x_i=a\mid\bm x_{-i})=\frac{e^{-\beta E(\bm x\text{ with }x_i=a)}}{\sum_b e^{-\beta E(\bm x\text{ with }x_i=b)}}
+=\operatorname{softmax}_a\Big[\beta\Big(h_i(a)+\sum_{j\neq i}J_{ij}(a,x_j)\Big)\Big] .
+\label{eq:gibbs}
+\end{equation}
+Only the terms touching site $i$ survive (the rest is common to all $21$ options and cancels), which
+is why one update is cheap. Low-energy letters are favoured but not chosen deterministically, and
+$\beta$ sets how strongly: as $\beta\to\infty$ the update always takes the best letter (a greedy
+descent that freezes in a single minimum), as $\beta\to0$ it picks letters uniformly at random.
+Repeating \eqref{eq:gibbs} over all sites is one \emph{sweep}. A chain started from any sequence
+forgets it after a few autocorrelation times, and from then on visits each sequence a fraction of
+the time equal to its Boltzmann probability \eqref{eq:boltz} --- this is detailed balance, and it is
+exact when $J_{ij}(a,b)=J_{ji}(b,a)$. (Attention couplings are slightly asymmetric, so for us it holds
+approximately; the main report discusses this.)
+
+\paragraph{Why chains do not sit at the minimum: entropy.} The energy along a chain relaxes from the
+starting value to a \emph{typical} value and then fluctuates around it; it does not keep going down
+to the lowest-energy sequence. The reason is counting. Let $\Omega(E)$ be the number of sequences
+with energy near $E$ and $S(E)=\ln\Omega(E)$ the \textbf{entropy}. The probability of finding the
+chain at energy $E$ is (number of such sequences) $\times$ (probability of each):
+\begin{equation}
+P(E)\propto\Omega(E)\,e^{-\beta E}=e^{\,S(E)-\beta E} .
+\end{equation}
+Low energies are individually likely but rare; medium energies are individually less likely but
+astronomically more numerous. The chain lives where $S(E)-\beta E$ is largest. Lowering the temperature
+(raising $\beta$) shifts the balance towards energy, which is exactly what $\beta^*>1$ did in the main
+report: it pushed the samples towards lower energy and stronger correlations.
+
+\paragraph{From sequences to regions: free energy.} Now ask for the probability of a whole region
+$k$ of sequence space, for instance a PCA cluster:
+\begin{equation}
+P(k)=\sum_{\bm x\in k}p(\bm x)=\frac{1}{\mathcal Z}\sum_{\bm x\in k}e^{-\beta E(\bm x)}
+\equiv\frac{e^{-\beta F_k}}{\mathcal Z},
+\qquad
+F_k=-\frac1\beta\ln\sum_{\bm x\in k}e^{-\beta E(\bm x)} .
+\label{eq:F}
+\end{equation}
+$F_k$ is the \textbf{free energy} of the region. It is an exact identity (take the restricted
+distribution $p_k(\bm x)=e^{-\beta E(\bm x)}/e^{-\beta F_k}$ on $k$ and compute its Shannon entropy
+$S_k=-\sum_{\bm x\in k}p_k\ln p_k=\beta\langle E\rangle_k-\beta F_k$) that
+\begin{equation}
+F_k=\langle E\rangle_k-T\,S_k ,
+\label{eq:FES}
+\end{equation}
+the mean energy of the region minus temperature times its entropy. A region carries a large weight
+if its sequences have low energy \emph{or} if there are very many of them. Mean energy alone does
+not decide.
+
+\begin{keybox}
+\textbf{What $s_k$ is.} In the main report $s_k$ denotes a cluster's \textbf{share}: the fraction of
+sequences (probability mass) that falls in cluster $k$, i.e.\ $s_k=P(k)$ above --- not the entropy,
+which we write $S_k$. The two are related through \eqref{eq:F}--\eqref{eq:FES}: the share is
+$s_k\propto e^{-\beta F_k}$, and the entropy enters through $F_k$. The free-energy error of
+the model for a cluster is
+\[
+\Delta F_k=-\ln\frac{s_k^{\text{gen}}}{s_k^{\text{nat}}}\quad\text{nats},
+\]
+the amount by which the model's $F_k$ is too high (relative to the other clusters) to reproduce the
+natural share. $\Delta F=1$ means the cluster gets $1/e\approx0.37$ of its natural share.
+\end{keybox}
+
+\paragraph{The entropy is visible in our data.} Applying \eqref{eq:FES} to the samples of the
+baseline model gives, relative to the dominant cluster C1, \ThermoTable. The under-sampled cluster
+C0 sits about \ThermoEgap\ energy units above C1 but only \ThermoFgap\ nats above it in free energy:
+the difference, \ThermoSgap\ nats, is entropy. C0 is a wide, diverse basin (its sequences are also
+the most mutually distant, \S\ref{sec:c1}). If energy alone set the weights, C0 would get a share
+$e^{-\ThermoEgap}$ of C1's; entropy is what keeps it at a few percent.
+
+\paragraph{How a restraint changes the picture.} Adding a term $U(\bm x)$ to the energy multiplies
+every probability by $e^{-\beta U(\bm x)}$ and renormalises. With
+$U=\frac{\lambda}{2}\|\PC(\bm x)-\bm t\|^2$ the factor is a Gaussian window of width $1/\sqrt{\beta\lambda}$
+around the target $\bm t$: sequences far from $\bm t$ are suppressed, sequences near it keep their
+relative Boltzmann weights. That is precisely a conditional distribution, which \S\ref{sec:pca}
+makes explicit.
+
+%======================================================================
+\section{The PCA argument, step by step}\label{sec:pca}
+%======================================================================
+\paragraph{Step 1: a sequence as a vector of zeros and ones.} PCA works on numbers, so each
+sequence is first one-hot encoded: for every site $i$ and letter $a$ there is an entry
+$x_{ia}\in\{0,1\}$, equal to $1$ iff site $i$ carries letter $a$. A sequence becomes a vector of
+length $Lq=63\times21=1323$ with exactly one $1$ per site. Toy example with $L=3$ and a two-letter
+alphabet $\{\mathrm A,\mathrm G\}$:
+\[
+\mathrm{AGA}\;\mapsto\;(\underbrace{1,0}_{\text{site 1}}\,|\,\underbrace{0,1}_{\text{site 2}}\,|\,
+\underbrace{1,0}_{\text{site 3}}).
+\]
+
+\paragraph{Step 2: a PCA coordinate is a dot product.} Fitting PCA finds directions $\bm v_c$ (unit
+vectors of length $1323$) along which the natural sequences vary most. Fitting is a nonlinear
+procedure, but once it is done, the coordinate of a sequence is just its projection on $\bm v_c$:
+\begin{equation}
+\PC_c(\bm x)=\bm v_c\cdot(\bm x-\bm\mu)=\sum_{i,a}v_{c,ia}\,x_{ia}-m_c,\qquad m_c=\bm v_c\cdot\bm\mu ,
+\end{equation}
+with $\bm\mu$ the mean one-hot vector. This is linear in $\bm x$; nothing is approximated.
+
+\paragraph{Step 3: because $\bm x$ is one-hot, the dot product is a table lookup per site.} At each
+site exactly one $x_{ia}$ is $1$, so the sum over $a$ picks one number per site:
+\begin{equation}
+\PC_c(\bm x)=\sum_{i=1}^{L}V_c(i,x_i)-m_c ,\qquad V_c(i,a)\equiv v_{c,ia}.
+\label{eq:lookup}
+\end{equation}
+In the toy example with $\bm v=(0.5,-0.5\,|\,0.1,0.3\,|\,{-0.2},0.4)$, $\PC(\mathrm{AGA})=0.5+0.3-0.2-m$,
+and mutating site 3 from A to G moves the coordinate by $0.4-(-0.2)=+0.6$, whatever the other sites
+are. The coordinate is a \emph{score table}, like a position-specific scoring matrix: every site adds a
+contribution depending only on its own letter. For the J-domains a single substitution moves
+$\PC_1$ by $0.125$ on average, while the family spans about $6.9$ units of $\PC_1$ (standard deviation $2.06$); going from one cluster to
+another takes tens of coordinated substitutions.
+
+\paragraph{Step 4: the square of a sum of site terms is a Potts energy.} A Potts energy is built from
+site terms ($h_i(x_i)$) and pair terms ($J_{ij}(x_i,x_j)$). Write $u_i=V_c(i,x_i)$ and expand
+\[
+\Big(\sum_i u_i-m_c-t_c\Big)^2=\underbrace{\sum_{i\neq j}u_iu_j}_{\text{pairs}}
++\underbrace{\sum_iu_i^2-2(m_c+t_c)\sum_iu_i}_{\text{sites}}+\text{const}.
+\]
+So the restraint $\frac{\lambda}{2}\sum_c(\PC_c(\bm x)-t_c)^2$ is exactly a Potts energy with
+\begin{equation}
+\Delta J_{ij}(a,b)=-\lambda\sum_cV_c(i,a)V_c(j,b),\qquad
+\Delta h_i(a)=\lambda\sum_c\big[(m_c+t_c)V_c(i,a)-\tfrac12V_c(i,a)^2\big].
+\label{eq:dJdh}
+\end{equation}
+Adding it to the learned energy gives \emph{another Potts model}. The sampler is unchanged except
+that each site update also scores, for each candidate letter, how far the resulting coordinate
+would be from the target --- a lookup in \eqref{eq:lookup}. Nothing is learned. (Unit test: on a toy
+system the sampler reproduces the enumerated distribution $\propto e^{-E-\lambda\|\PC-\bm t\|^2/2}$,
+and \eqref{eq:dJdh} matches the direct restraint to $10^{-10}$.)
+
+\paragraph{Step 5: what $\lambda$ means --- a noisy measurement.} By Bayes' rule, if we ``measure''
+the coordinate of a sequence with Gaussian noise of width $\sigma$ and obtain $\bm t$, the posterior
+over sequences is
+\begin{equation}
+p(\bm x\mid\bm t)\;\propto\;p(\bm x)\;e^{-\|\PC(\bm x)-\bm t\|^2/2\sigma^2} ,
+\label{eq:bayes}
+\end{equation}
+which is the restrained Boltzmann distribution with $\lambda=1/\sigma^2$ (at $\beta=1$). So
+$\lambda$ is not a fudge factor: $1/\sqrt\lambda$ is the width of the target region, and
+$\lambda\to\infty$ is the exact conditional $p(\bm x\mid\PC(\bm x)=\bm t)$. The old appended-label
+model tried to \emph{learn} this relationship from data; here it is written down.
+
+\paragraph{Step 6: why it cannot blow up the protein in the old way.} The restraint only involves
+the two directions $\bm v_1,\bm v_2$. Everything else about the sequence --- which residues are
+conserved, which pairs co-vary, the HPD motif --- is still scored by the learned $E(\bm x)$ alone.
+Raising $\lambda$ narrows the window; it never amplifies the learned couplings. The price of a
+large $\lambda$ is different: the chain must satisfy the coordinate almost exactly and may accept
+worse energies to do so. That trade-off is what the experiments measure.
+
+\paragraph{Step 7: what C3 learns, in this language.} C3 is trained on pairs (sequence, its
+coordinate plus noise of width $\sigma$), so the conditional it is fitted to is exactly
+\eqref{eq:bayes} with $\lambda=1/\sigma^2$. Expanding as in \eqref{eq:dJdh}, that distribution has
+(i) a coupling correction $-\lambda\sum_cV_cV_c$ that does \emph{not} depend on $\bm t$, and (ii) a
+field that is \emph{linear} in $\bm t$. C3's parametrisation --- shared couplings plus fields
+$h_i(a\mid\bm z)=\sum_f W_f(i,a)\phi_f(\bm z)$ with $\phi$ containing $1,z_1,z_2$ --- can therefore
+represent it: the learned $J$ absorbs part (i), the linear features carry part (ii). We train C3 at
+$\sigma=1,\,0.5,\,0.25$ and compare it with C1 at the matching $\lambda=1,4,16$. This also predicts
+what happens if the $\bm z$-dependent field is amplified by a gain $\kappa>1$ at sampling time,
+which is the analogue of the old $\beta_\mathrm{PCA}$: the field part (ii) grows but the
+coupling part (i), which acts as the spring holding $\PC$ \emph{at} the target, does not.
+Sequences are then pushed \emph{past} the target --- the ``shifted too far right'' of the previous
+study. \S\ref{sec:c3} tests this prediction.
+
+\input{conditional_results.tex}
+
+\end{document}

@@ -1,0 +1,260 @@
+\documentclass[10pt,a4paper]{article}
+\usepackage[margin=2.1cm]{geometry}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{graphicx,booktabs,caption}
+\usepackage[hidelinks]{hyperref}
+\usepackage{lmodern}
+\usepackage[T1]{fontenc}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\captionsetup{font=small,labelfont=bf}
+\input{auto_numbers.tex}
+
+\newcommand{\cost}[1]{\textsf{\footnotesize #1}}
+\newcommand{\PC}{\mathrm{PC}}
+\newcommand{\PCA}{\mathrm{PCA}}
+
+\title{\vspace{-1.2cm}Conditioning generation on PCA coordinates:\\ post-mortem and candidate methods}
+\author{AttentionDCA / J-domains --- proposal for the next experiment}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+An earlier study appended the discretised PCA coordinates to each sequence as two extra sites and
+learned a joint coupling tensor over sequence and label, steering generation with a separate
+inverse temperature $\beta_{\PCA}$. It works only partially: steering requires
+$\beta_{\PCA}\gtrsim10$, and beyond that the samples stop being J-domains. This note diagnoses
+\emph{why} that happens, then sets out four ways to do conditional generation properly. The
+central observation is that a PCA coordinate is an \emph{exactly linear} function of the one-hot
+sequence, so conditioning on it needs no learning at all: the constraint can be written in closed
+form as a Potts term and added to the existing model. Nothing here is implemented yet; a common
+evaluation protocol is given at the end. A secondary section covers the separate question of the
+unconditional model's mode weights.
+\end{abstract}
+
+%======================================================================
+\section{Two goals that are often confused}
+%======================================================================
+\begin{description}[leftmargin=1.2em,itemsep=2pt]
+\item[\textbf{(G1) Conditional generation.}] ``Give me sequences at this place in PCA space.''
+  Success means the samples land near the target \emph{and} remain valid J-domains. This is the
+  goal of the earlier study.
+\item[\textbf{(G2) Correct mode weights.}] ``When I sample freely, each sub-family should appear
+  with its natural frequency.'' Our current model fails this for one cluster: \MissCl\ carries
+  \ClTest\% of the natural weight but receives \ClOne\% of the samples ($\Delta F=\dFmiss$ nats).
+\end{description}
+They are different problems. G1 is solved by adding a constraint at sampling time; G2 is a
+property of the learned energy function and is not fixed by conditioning --- though, usefully, a
+good solution to G1 gives a \emph{measurement} tool for G2 (\S\ref{sec:fe}). Sections
+\ref{sec:post}--\ref{sec:cond} address G1; \S\ref{sec:uncond} summarises G2.
+
+%======================================================================
+\section{Post-mortem: why appending discretised coordinates underperforms}\label{sec:post}
+%======================================================================
+In the earlier work the $35\times35$ discretised PCA grid was appended as two extra sites with an
+enlarged alphabet ($\bar q=35$), giving a joint tensor $J$ of shape
+$(\bar q,\bar q,L{+}2,L{+}2)$, and sampling used
+$P(a_i\mid\bm a_{-i},\bm z)\propto\exp\big(\sum_{j\le L}J_{ij}(a_i,a_j)+\beta_{\PCA}\sum_{j>L}
+J_{ij}(a_i,z_j)\big)$.
+Four structural problems explain the reported behaviour, and none of them is a tuning issue.
+
+\begin{enumerate}[leftmargin=*,itemsep=3pt]
+\item \textbf{The label is outvoted $2$ to $L$.} In the conditional for site $i$ the label
+      contributes $2$ of $L+2=65$ coupling terms, about $3\%$ of the local field. That is exactly
+      why steering only begins around $\beta_{\PCA}\approx10$. But $\beta_{\PCA}$ multiplies
+      \emph{learned} couplings, whose directions in sequence space are arbitrary wherever the data
+      were thin; amplifying them by $10$--$50$ pushes sequences along those arbitrary directions,
+      which is the observed ``shifts too far right, loses the HPD motif''. There is no
+      $\beta_{\PCA}$ that both steers and preserves the protein, because the two effects are
+      driven by the same amplified parameters.
+\item \textbf{One-hot bins throw away the geometry of PCA space.} Bins $20$ and $21$ are adjacent
+      in $\PC_1$ but are unrelated symbols in a Potts alphabet: nothing ties their columns
+      together. With $35\times35=1225$ cells and ${\sim}10^4$ training sequences, most cells hold a
+      handful of sequences or none, so the label couplings are estimated from almost no data and
+      cannot interpolate. This is the direct explanation of the coordinate-generation figures:
+      conditioning on a true training sequence and sampling its coordinates puts mass on one or
+      two spurious cells (Model 1/2) or is nearly uniform (Model 3), instead of recovering the
+      true cell.
+\item \textbf{The label is a deterministic function of the sequence.} $\bm z=f(\bm x)$ exactly, so
+      the true $p(\bm z\mid\bm x)$ is a delta. A handful of pairwise terms to a 35-state variable
+      cannot represent a delta, so the fit is forced to be wrong; the model is being asked to
+      learn something it cannot express, and the coordinate-generation test measures precisely
+      that failure.
+\item \textbf{It is unnecessary.} The quantity being conditioned on is already an exact linear
+      function of the model's own variables (\S\ref{sec:cond}), so learning it from data only
+      introduces estimation error where a closed form exists.
+\end{enumerate}
+
+%======================================================================
+\section{The key fact: $\PC$ is linear in the one-hot sequence}\label{sec:cond}
+%======================================================================
+Let $\bm x\in\{0,1\}^{Lq}$ be the one-hot encoding, $x_{ia}=1$ iff site $i$ carries letter $a$.
+The PCA used throughout this project is fitted on exactly these vectors, so for component $c$
+\begin{equation}
+\PC_c(\bm x)=\sum_{i,a}V_{c,ia}\,x_{ia}-m_c,\qquad m_c=\sum_{i,a}V_{c,ia}\,\mu_{ia},
+\label{eq:lin}
+\end{equation}
+with $V$ the loadings and $\mu$ the training mean. This is not an approximation: evaluating
+\eqref{eq:lin} against \texttt{sklearn}'s \texttt{transform} on our test set reproduces it to
+$0.0$ (machine zero).
+
+Therefore a harmonic restraint towards a target $\bm t$ in PCA space,
+\begin{equation}
+E_\lambda(\bm x)=E(\bm x)+\frac{\lambda}{2}\sum_{c}\big(\PC_c(\bm x)-t_c\big)^2 ,
+\label{eq:restraint}
+\end{equation}
+is \emph{exactly a Potts energy}: expanding the square gives a pairwise part and a field part,
+\begin{equation}
+\Delta J_{ia,jb}=-\lambda\sum_c V_{c,ia}V_{c,jb},\qquad
+\Delta h_{ia}=\lambda\sum_c (t_c+m_c)\,V_{c,ia},
+\end{equation}
+i.e.\ a rank-$C$ correction to the coupling matrix plus a field. No training, no new parameters,
+no $\beta_{\PCA}$ to tune blindly --- $\lambda$ is a restraint stiffness with a clear meaning, as
+in umbrella sampling.
+
+\paragraph{Why this behaves better than the learned version.} Increasing $\lambda$ constrains the
+sequence only along the $C$ directions $V_c$; every direction orthogonal to them stays governed by
+the protein energy $E(\bm x)$. The failure mode of the earlier approach --- amplifying arbitrary
+learned directions until the protein breaks --- cannot occur, because the constrained direction is
+the PCA direction itself, by construction. Quality still degrades as $\lambda\to\infty$ (the
+constraint eventually dominates), but gracefully and for an understandable reason.
+
+\paragraph{Scale, for intuition.} On our clean split, $\PC_1$ spans $6.9$ across the family with
+standard deviation $2.06$, while a single substitution moves it by $0.125$ on average (at most
+$0.42$). Reaching a distant target therefore requires tens of coordinated substitutions, which is
+why a weak restraint does nothing and why the restraint must be applied \emph{during} sampling
+rather than as a post-hoc filter.
+
+\subsection*{C1 --- Analytic harmonic restraint (recommended)}
+Implement \eqref{eq:restraint} directly in the existing sampler. Each chain keeps a running
+$\PC_c$; changing site $i$ from $a$ to $a'$ shifts it by $V_{c,ia'}-V_{c,ia}$, so the conditional
+logits cost $O(q\,C)$ extra per site update --- negligible.
+
+\noindent\cost{Cost:} ${\sim}30$ lines in \texttt{sampler.py}, no retraining, minutes to run.
+\cost{Expected:} samples concentrated near $\bm t$ with a controlled trade-off; a monotone,
+interpretable $\lambda$ curve replacing the non-monotone $\beta_{\PCA}$ behaviour.
+\cost{Risks:} a harmonic restraint targets a \emph{point}; for a region, restrain to the region's
+centre with a soft $\lambda$, or use a flat-bottomed restraint (zero penalty inside the target
+cell, quadratic outside). Also, $\PC$ is a 2-D summary explaining only
+$\PCone\%+\PCtwo\%$ of the variance, so ``hit the target'' never means ``is the right protein''
+--- sequence-quality metrics must be reported alongside.
+
+\subsection*{C2 --- Exact conditional by rejection (ground truth)}
+Sample the unconditioned model, keep only the sequences whose coordinates fall in the target cell.
+This yields \emph{exactly} $p(\bm x\mid \bm z\in\text{cell})$ with no approximation.
+
+\noindent\cost{Cost:} 20 lines, no retraining. \cost{Expected:} the reference answer every other
+method should be compared against --- for the first time we would know what the conditional
+distribution actually is. \cost{Risks:} efficiency falls with the natural density of the target;
+for a cell in the dense part of the family it is cheap, for the far tail it is hopeless. This is
+the method's honest limitation, and it is exactly why C1/C3 exist --- but it makes C2 the right
+validation for \emph{reachable} targets, including \MissCl.
+
+\subsection*{C3 --- Learned conditional field (if a learned model is wanted)}
+Keep the coordinates \emph{continuous} and let them bias every site through a field rather than
+through two coupling columns:
+\begin{equation}
+p(x_i=a\mid\bm x_{-i},\bm z)\propto\exp\Big(\sum_{j\neq i}J_{ij}(a,x_j)+\bm w_{ia}\!\cdot\!\phi(\bm z)\Big),
+\qquad \phi(\bm z)=(1,z_1,z_2,z_1^2,z_2^2,z_1z_2),
+\end{equation}
+trained by conditional pseudo-likelihood on $(\bm x,\bm z=f(\bm x))$ pairs. Parameters:
+$|\phi|\,Lq\approx8\,000$, a $4\%$ increase. This repairs problems 1 and 2 of \S\ref{sec:post}:
+the label now reaches \emph{every} site, and smoothness in $\bm z$ is built into the
+parametrisation so neighbouring coordinates share statistical strength.
+
+\noindent\cost{Cost:} moderate --- conditional field in model, trainer and sampler; 1 training run
+($\approx40$ min). \cost{Expected:} steering without a large temperature, and a model that can also
+answer $p(\bm z\mid\bm x)$ sensibly. \cost{Risks:} still learns what C1 knows exactly, so it is
+only worth it if the aim is a \emph{learned} conditional model (e.g.\ to later condition on
+something that is \emph{not} a linear function of the sequence --- phenotype, host, temperature).
+That is the real argument for C3, and it is a good one.
+
+\subsection*{C4 --- Repair the label-as-sites model (if continuity with the old work matters)}
+Two targeted fixes: (i) give the label an ordinal/smooth encoding --- e.g.\ replace the $35$-state
+one-hot bin by a small set of basis features, or tie neighbouring bins with a smoothness penalty
+$\sum_z\|J(\cdot,z{+}1)-J(\cdot,z)\|^2$; (ii) rebalance the $2$-vs-$L$ asymmetry by replicating the
+label over $R$ sites or by scaling the label block at \emph{training} time rather than inflating
+$\beta_{\PCA}$ at sampling time.
+
+\noindent\cost{Cost:} 1 training run plus the smoothness term. \cost{Expected:} coordinate
+generation that recovers the true cell, which is the clean diagnostic the old report found broken.
+\cost{Risks:} keeps the discretisation that caused the trouble; strictly dominated by C1 for this
+particular conditioning variable.
+
+\begin{table}[h]\centering\small
+\begin{tabular}{llccl}
+\toprule
+ & learning needed & effort & $\beta_{\PCA}$ pathology & what it gives \\
+\midrule
+C1 harmonic restraint & none (closed form) & low    & no  & controlled steering, free-energy maps \\
+C2 rejection          & none               & trivial& no  & the exact conditional, as ground truth \\
+C3 conditional field  & yes                & medium & no  & a learned conditional, extensible to other labels \\
+C4 repaired labels    & yes                & medium & reduced & continuity with the previous study \\
+\bottomrule
+\end{tabular}
+\caption{Conditional-generation options. C1 and C2 require no retraining.}
+\end{table}
+
+%======================================================================
+\section{A bonus: the restraint measures the model's error everywhere}\label{sec:fe}
+%======================================================================
+Running C1 at a grid of targets with a moderate $\lambda$ is umbrella sampling along
+$(\PC_1,\PC_2)$. Reweighting the windows (WHAM, or simply the known biasing potential) gives the
+model's free-energy surface $F_{\text{model}}(\bm z)$, which can be compared directly with the
+natural one, $-\ln\rho_{\text{nat}}(\bm z)$ estimated from the reweighted training sequences. The
+difference is a \emph{map} of where the model misplaces probability --- a much richer object than
+the three per-cluster numbers we currently report, and it would show whether the \MissCl\ deficit
+is a uniform offset of that basin or a distortion of its shape. \cost{Cost: one C1
+implementation plus a grid of runs.}
+
+%======================================================================
+\section{Separately: the unconditional mode weights (G2)}\label{sec:uncond}
+%======================================================================
+For completeness, the options for the unconditional problem, unchanged from the previous note:
+\textbf{M1} per-cluster reweighting of the training set by $e^{\gamma\Delta F_k}$ (a control loop;
+cheap, but \MissCl\ has only $M_\text{eff}=\MeffMiss$ against \Nparams\ parameters, so it risks
+over-fitting); \textbf{M2} add explicit fields $h_i$ (cheap, a correctness fix in its own right);
+\textbf{M3} an explicit mixture with a hand-set prior $\pi_k$ (correct by construction, but imposes
+rather than learns the prior); \textbf{M4} likelihood-based fine-tuning by persistent contrastive
+divergence, whose gradient $\langle\cdot\rangle_{\text{data}}-\langle\cdot\rangle_{\text{model}}$
+contains exactly the term pseudo-likelihood omits (the principled fix, highest effort);
+\textbf{M5} resampling generated pools to the natural cluster shares (a control, not a fix).
+
+Note that C1/C2 give a cheap partial answer to G2 as well: generating a pool whose cluster
+proportions are forced to the natural ones isolates how much of the full-set statistics gap is due
+to mode weight alone. Since restricting to the covered clusters already lifts $r(C_{ij})$ from
+\rCOne\ to \rCcovOne, we can predict the outcome and check it.
+
+%======================================================================
+\section{Evaluation protocol (fixed in advance)}
+%======================================================================
+For conditional generation, every method is reported on the same two axes, because the previous
+study's difficulty was precisely that improving one destroys the other:
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+\item \textbf{On-target accuracy:} mean and spread of $\|\PC(\bm x)-\bm t\|$ over the generated
+      pool; fraction landing in the target cell.
+\item \textbf{Sequence quality, at matched accuracy:} $r(f_i)$ and $r(C_{ij})$ against the
+      \emph{natural sequences in the same region} (not the whole family --- the earlier report
+      noted this distinction and it is the right one); retention of the HPD motif; mean distance
+      to the nearest natural sequence; held-out energy of the samples.
+\item \textbf{The trade-off curve itself:} sweep $\lambda$ (or $\beta_{\PCA}$) and plot quality
+      against accuracy. A method is better if its curve dominates, which is a fairer comparison
+      than any single operating point.
+\item \textbf{Against ground truth:} wherever C2 is affordable, report the gap between each
+      method's conditional and the exact one.
+\item \textbf{Targets:} at least one dense target and one in \MissCl, since the sparse region is
+      where methods differ.
+\end{itemize}
+
+\vspace{0.2cm}
+\noindent\textbf{Recommendation.} \textbf{C1 + C2 together}: C2 fixes what the right answer is,
+C1 provides a cheap and well-behaved way to reach it, and neither needs retraining, so both can be
+done and evaluated quickly. Add \textbf{C3} if the goal is a learned conditional model that will
+later be conditioned on labels which are \emph{not} functions of the sequence --- that is the case
+where the analytic route is unavailable and the extra machinery earns its keep.
+
+\end{document}

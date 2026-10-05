@@ -38,3 +38,7 @@ report/*.blg
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# conditioning experiments: sample pools and field weights (regenerable)
+outputs/cond/
+outputs/W_*.npy

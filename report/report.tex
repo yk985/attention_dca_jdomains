@@ -10,6 +10,7 @@
 \usepackage{placeins}
 \captionsetup{font=small,labelfont=bf}
 \input{auto_numbers.tex}
+\input{cond_numbers.tex}
 
 \title{AttentionDCA on the J-domain family:\\ pseudo-likelihood training, sampling and generative checks}
 \author{TP4 --- remastered}
@@ -275,7 +276,7 @@ distance to the closest training sequence, and the natural test--test value.}
 
 
 %======================================================================
-\section{Generated vs.\ natural sequences}
+\section{Generated vs.\ natural sequences}\label{sec:gen}
 %======================================================================
 
 \paragraph{PCA (Fig.~\ref{fig:pca}).} The first two components of the one-hot test set
@@ -318,8 +319,10 @@ the conditionals $p(x_i\mid\bm x_{\setminus i})$ --- purely local quantities ---
 global normalisation, so nothing in the loss asks the model to reproduce how \emph{much} total
 probability mass each sub-family carries. The model has no fields and no mixture component to hold
 such a prior; the relative weight of the basins is only an indirect consequence of the couplings.
-Reweighting compounds this, since it is designed to flatten exactly the clade-frequency signal
-that would tell the model how common each sub-family is. The result is a model that describes
+Reweighting is \emph{not} the culprit here, as one might suspect: \MissCl\ is only
+\RawShareMiss\% of the raw training sequences but \ClTrain\% of the reweighted ones, so the weights
+already nearly double its influence and the model still undershoots to \ClOne\%. What the model
+misses is the target it was actually given. The result is a model that describes
 every sub-family correctly and populates them in the wrong proportion. It is also why the
 independent-site baseline distributes its samples as $(0.02,0.10,0.88)$ against the natural
 $(0.14,0.39,0.47)$: cluster identity is a covariation effect, and a model without couplings
@@ -477,6 +480,8 @@ The generative metrics themselves are barely affected --- the model learns nearl
 distribution either way --- but the \emph{interpretation} of the likelihood numbers changes
 completely, and only the disjoint split supports a claim of generalisation.
 
+\input{sec_cond_report.tex}
+
 %======================================================================
 \section{Summary and caveats}
 %======================================================================
@@ -498,6 +503,12 @@ completely, and only the disjoint split supports a claim of generalisation.
       sampler populates. The samples are novel and as diverse as natural sequences.
       $\beta^*=\BetaStar$ restores the correlation amplitude and the natural energy level at a
       small cost in diversity.
+\item \textbf{Conditioning.} Because a PCA coordinate is an exact Potts term, a harmonic restraint
+      added at sampling time (C1) steers generation to any cluster, including the neglected one
+      ($5\%\to100\%$ of chains in it at $\lambda\ge4$), with the HPD motif kept in $\ge96\%$ of samples
+      and the best correlation agreement at $\lambda\approx1$--$4$. A learned conditional field (C3)
+      matches it at $\lambda=1/\sigma^2$ and is better on the neglected cluster; amplifying its field
+      reproduces the over-steering of the earlier appended-coordinate approach.
 \item \textbf{Limitations.}
       (i) PL training does not constrain the global normalisation, hence the $\beta$ offset.
       (ii) The attention couplings are asymmetric, so the PL chain is only approximately Boltzmann.
@@ -505,9 +516,11 @@ completely, and only the disjoint split supports a claim of generalisation.
       pseudo-likelihood fits conditionals and not the relative masses of the basins: the model
       learns that sub-family's local statistics as well as any other
       ($\langle\log\mathrm{PL}\rangle$ on train \PLLmissTrain\ vs.\ \PLLcovTrain) but puts its
-      energy \EgapMiss\ units too high, a free-energy error of \dFmiss\ nats. Adding explicit
-      fields, fitting a mixture, or reweighting the training set towards the sub-family would all
-      address the prior directly.
+      energy \EgapMiss\ units too high, a free-energy error of \dFmiss\ nats. Explicit per-site
+      fields do not fix it (tested in \texttt{conditional.pdf}: the sub-family stays at $5\%$); the
+      balance between basins is also sensitive to when training stops (\S\ref{sec:cond}).
+      Conditioning reaches the sub-family on demand (previous item); drawing targets from the natural
+      distribution of coordinates and sampling conditionally would restore its weight by construction.
       (iv) The split removes only exact copies, so \CleanPctNear\% of the test set still lies
       within \SplitThresh\ of a training sequence; the held-out likelihood is a fair measure of
       generalisation to unseen sequences, not to unseen sub-families.

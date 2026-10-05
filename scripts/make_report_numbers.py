@@ -246,6 +246,10 @@ if "cluster_energy" in M:
     m("PLLcovTrain", "/".join(f"{r_['PLL_train']:.1f}" for r_ in rc))
     m("dFmiss", f"{rm['dF_' + G[0]]:+.2f}")
     m("dFmissFac", f"{np.exp(-rm['dF_' + G[0]]):.2f}")
+    m("RawShareMiss", f"{100 * rm.get('rawshare_train', float('nan')):.1f}")
+    m("MeffMiss", f"{rm.get('meff_train', float('nan')):.0f}")
+    m("MeffCov", "/".join(f"{r_.get('meff_train', float('nan')):.0f}" for r_ in rc))
+    m("BoostMiss", f"{np.exp(rm['dF_' + G[0]]):.1f}")
 
 # data-file audit table
 if (OUT / "data_audit.json").exists():

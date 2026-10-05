@@ -32,3 +32,15 @@ def add_split_arg(parser):
 
 def resolve(split: str):
     return SPLITS[split]
+
+
+def load_frame(split: str):
+    """The PCA frame used in every figure (fitted on the unweighted one-hot test set), cached."""
+    from attdca.data import load_msa
+    from attdca.pca_frame import LinearFrame
+    path = OUT / f"pca_frame_{split}.npz"
+    if path.exists():
+        return LinearFrame.load(path)
+    fr = LinearFrame.fit(load_msa(str(resolve(split)[1])))
+    fr.save(path)
+    return fr

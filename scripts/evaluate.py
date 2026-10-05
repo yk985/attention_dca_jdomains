@@ -193,6 +193,9 @@ for c in range(a.k_clusters):
     row = {"cluster": c, "covered": c in covered,
            "share_test": float(share["test"][c]), "share_train": float(share["train"][c]),
            "n_test": int(mt.sum()), "n_train": int(mr.sum()),
+           # raw (unweighted) share vs weighted share: shows which way reweighting pushes,
+           # and Meff_k says how much independent data the cluster actually carries
+           "rawshare_train": float(mr.mean()), "meff_train": float(wtr[mr].sum()),
            "E_test": _wm(_Ete[mt], wte[mt]), "E_train": _wm(_Etr[mr], wtr[mr]),
            "E_test_unw": float(_Ete[mt].mean()) if mt.any() else float("nan"),
            "PLL_test": _wm(_Pte[mt], wte[mt]), "PLL_train": _wm(_Ptr[mr], wtr[mr])}

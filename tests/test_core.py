@@ -110,3 +110,82 @@ def test_freqs_and_autocorr():
     x = np.random.default_rng(0).standard_normal((4000, 50))
     _, tau = autocorr_time(x)
     assert 0.7 < tau < 1.4
+
+
+def _toy_restraint(L=3, q=3, seed=0):
+    g = torch.Generator().manual_seed(seed)
+    Jab = torch.randn(L, L, q, q, generator=g)
+    J = 0.5 * (Jab + Jab.permute(1, 0, 3, 2))          # symmetric -> exact Boltzmann target
+    J[torch.arange(L), torch.arange(L)] = 0
+    h = torch.randn(L, q, generator=g)
+    V = torch.randn(2, L, q, generator=g)
+    return J, h, dict(V=V, m=torch.tensor([0.3, -0.2]), t=torch.tensor([1.0, -0.5]), lam=1.5)
+
+
+def _all_states(L, q):
+    return np.array(np.meshgrid(*[np.arange(q)] * L, indexing="ij")).reshape(L, -1).T
+
+
+def test_restraint_sampler_targets_restrained_boltzmann():
+    """Fields + harmonic PCA restraint: the empirical distribution of many chains must match
+    exp(-E(x) - lam/2 |PC(x) - t|^2) enumerated over all q^L states."""
+    L, q = 3, 3
+    J, h, R = _toy_restraint(L, q)
+    S = _all_states(L, q)
+    X = torch.nn.functional.one_hot(torch.as_tensor(S), q).float()
+    E = energy(AttentionPotts.flat(J), X, h.expand(len(S), L, q))
+    pc = R["V"][:, np.arange(L)[None, :], S].sum(-1).T - R["m"]
+    p = torch.softmax(-(E + 0.5 * R["lam"] * (pc - R["t"]).pow(2).sum(1)), 0).numpy()
+    out = sample(J, np.zeros((60000, L), dtype=np.int64), n_sweeps=30, device=DEV, h=h, restraint=R)
+    idx = (out["Z"] * q ** np.arange(L)[::-1]).sum(1)
+    emp = np.bincount(idx, minlength=q ** L) / len(idx)
+    assert np.abs(emp - p).sum() < 0.03
+    assert np.allclose(out["pc"][-1], R["V"][:, np.arange(L)[None, :], out["Z"]].sum(-1).T - R["m"], atol=1e-5)
+
+
+def test_restraint_equals_closed_form_potts_term():
+    """lam/2 sum_c (PC_c - t_c)^2 = -1/2 x^T dJ x - dh.x + const with
+    dJ = -lam V^T V, dh = lam (t + m) V (the identity behind proposal C1)."""
+    L, q = 3, 3
+    _, _, R = _toy_restraint(L, q, seed=1)
+    V, m, t, lam = R["V"].reshape(2, -1).double(), R["m"].double(), R["t"].double(), R["lam"]
+    S = _all_states(L, q)
+    X = torch.nn.functional.one_hot(torch.as_tensor(S), q).double().reshape(len(S), -1)
+    direct = 0.5 * lam * (X @ V.T - m - t).pow(2).sum(1)
+    dJ, dh = -lam * V.T @ V, lam * (t + m) @ V
+    potts = -0.5 * ((X @ dJ) * X).sum(1) - X @ dh
+    assert torch.allclose(direct - potts, (direct - potts)[0].expand(len(S)), atol=1e-10)
+
+
+def test_field_models_pl_match_naive_loop():
+    for field in ("const", "quad"):
+        m = AttentionPotts(6, H=3, d=4, seed=0, field=field)
+        with torch.no_grad():
+            m.W.normal_()
+            if field == "quad":
+                m.cond_mu.copy_(torch.tensor([0.5, -1.0])); m.cond_sd.copy_(torch.tensor([2.0, 0.5]))
+        rng = np.random.default_rng(0)
+        Z = torch.as_tensor(rng.integers(0, 21, (4, m.L)))
+        z = torch.as_tensor(rng.normal(size=(4, 2)), dtype=torch.float32)
+        w = torch.full((4,), 0.25)
+        _, nlpl = m.neg_log_pl(Z, w, 0.0, z=z)
+        J = m.couplings().detach()
+        ll = 0.0
+        for b in range(4):
+            u = ((z[b] - m.cond_mu) / m.cond_sd).tolist() if field == "quad" else None
+            phi = [1.0] if field == "const" else [1, u[0], u[1], u[0] ** 2, u[1] ** 2, u[0] * u[1]]
+            for i in range(m.L):
+                lg = sum(phi[f] * m.W[f, i].detach() for f in range(len(phi)))
+                lg = lg + sum(J[i, j, :, Z[b, j]] for j in range(m.L) if j != i)
+                ll += 0.25 * torch.log_softmax(lg, 0)[Z[b, i]].item()
+        assert abs(nlpl.item() + ll) < 1e-4
+
+
+def test_linear_frame_matches_sklearn():
+    from sklearn.decomposition import PCA
+    from attdca.pca_frame import LinearFrame
+    Z = np.random.default_rng(0).integers(0, 21, (200, 8))
+    fr = LinearFrame.fit(Z)
+    X = np.eye(21)[Z].reshape(len(Z), -1)
+    ref = PCA(2).fit(X).transform(X)
+    assert np.allclose(np.abs(fr.transform(Z)), np.abs(ref), atol=1e-4)

@@ -8,7 +8,7 @@ import json
 import numpy as np
 import torch
 
-from common import OUT, add_split_arg, resolve
+from common import OUT, add_split_arg, resolve, load_frame
 from attdca.data import load_msa, compute_weights
 from attdca.train import train
 
@@ -22,6 +22,12 @@ p.add_argument("--epochs", type=int, default=500)
 p.add_argument("--patience", type=int, default=25)
 p.add_argument("--seed", type=int, default=0)
 p.add_argument("--tag", default="main")
+p.add_argument("--field", choices=["none", "const", "quad"], default="none",
+               help="none = plain AttentionDCA; const = + per-site fields (M2); "
+                    "quad = + fields depending on the PCA coordinates (C3)")
+p.add_argument("--cond_noise", type=float, default=0.0,
+               help="std of the noise added to the training PCA coordinates (field=quad)")
+p.add_argument("--lambd_h", type=float, default=1e-4)
 a = p.parse_args()
 
 TRAIN, _ = resolve(a.split)
@@ -29,13 +35,20 @@ Z = load_msa(str(TRAIN))
 w, meff, theta = compute_weights(Z)
 print(f"train ({a.split}): M={len(Z)} L={Z.shape[1]} theta={theta:.3f} Meff={meff:.1f}")
 
+cond = None
+if a.field == "quad":
+    cond = load_frame(a.split).transform(Z)
+    print(f"conditioning on PCA coordinates: mean {cond.mean(0)}, sd {cond.std(0)}")
 model, hist = train(Z, w, H=a.H, d=a.d, lambd=a.lambd, lr=a.lr, batch_size=a.batch,
-                    max_epochs=a.epochs, patience=a.patience, seed=a.seed)
+                    max_epochs=a.epochs, patience=a.patience, seed=a.seed,
+                    field=a.field, cond=cond, cond_noise=a.cond_noise, lambd_h=a.lambd_h)
 
 np.savez(OUT / f"weights_train_{a.split}.npz", w=w, theta=theta, meff=meff)
 torch.save({"state": model.state_dict(), "cfg": vars(a), "L": Z.shape[1]}, OUT / f"model_{a.tag}.pt")
 with torch.no_grad():
     np.save(OUT / f"J_{a.tag}.npy", model.couplings().cpu().numpy())
+    if a.field != "none":
+        np.save(OUT / f"W_{a.tag}.npy", model.W.cpu().numpy())
 hist.update(cfg=vars(a), M=len(Z), theta=theta, meff=meff,
             n_params=sum(p.numel() for p in model.parameters()))
 json.dump(hist, open(OUT / f"train_hist_{a.tag}.json", "w"), indent=1)
